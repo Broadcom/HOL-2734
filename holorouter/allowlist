@@ -1,12 +1,3 @@
-# startlist
-
-The "startlist" is merged with the default proxy allowlist during labstartup.
-
-Once labstartup is complete, then the "allowlist" is used to restrict access to domains.
-
-Use caution adding an allowlist file as it overwrites the predefined allowlist. For reference, here are the contents of the default allowlist:
-
-```plain
 vcf.lab
 jawg.io
 vmware.com
@@ -29,4 +20,12 @@ projects.packages.broadcom.com
 q1uk5yfspf.execute-api.us-east-2.amazonaws.com
 cjguvz7527.execute-api.us-west-1.amazonaws.com
 auyrv6ve2i.execute-api.us-west-2.amazonaws.com
-```
+us.archive.ubuntu.com
+mirrors.rockylinux.org
+mirror.chpc.utah.edu
+mirror.cs.vt.edu
+mirror.siena.edu
+mirror.rnet.missouri.edu 
+mirrors.rit.edu
+gcp.mirrors.ctrliq.cloud
+mirror.math.princeton.edu
