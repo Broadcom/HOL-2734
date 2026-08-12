@@ -9,65 +9,57 @@
 \_| |_/\__,_|_| |_|\__,_||___/ \___/|_| |_| \_____/\__,_||_.__/|___/
 ```
 
-## REMOVE THIS BLOCK BEFORE PUBLISHING
 
-THIS IS AN EXAMPLE. REPLACE THIS WITH YOUR OWN README.md using the pattern below.
 
-This is customer facing so please make it look professional. Thanks.
-
-This file can be updated and will be copied to the console desktop at startup.
-
-> **NOTE:** this file is public so NEVER include passwords. The official HOL Password is stored in the PASSWORD.txt that is copied to the console at boot.
 
 ## Lab Details
 
 ```plain
 * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - *
-*                       HOL-2734                  *
+*                                     HOL-2734                                  *
 * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - * - *
 ```
 
-###  Primary benefits of your lab
+Featured Product(s)
+vSAN - Lab SKU HOL-2734-01 covers the storage capabilities of VMware vSAN
+Protect and Recovery - Lab SKU HOL-2734-03 covers the disaster recovery capabilities of VCF Protect and Recovery
+Salt - Lab SKU HOL-2734-05 covers the workload’s Configuration, Compliance and Vulnerability Management.
 
-Provide information about the lab here
+Please note: the passwords for accounts used in this lab can be found in the lab manual (right edge of screen) and/or
+in the PASSWORD.txt file on the lab console desktop.
 
-### Featured Product(s)
+Labs
 
-More detail about your lab: Products/Features covered in this lab.
+=== vSAN ===
 
-* Product 1
-* Product 2
-* Feature 1
-* Feature 2
+Credentials for all vCenter Operations Manager Instances: User name: admin
 
-Additional notes and "interesting" facts about your lab. (pre-release code, simulated data, etc.)
+For vCenter Server Administration Console: User name: root
 
-## Modules
+For the vSphere Client, use: User name: administrator@vsphere.local
 
-Please record account names for this lab. All acccounts use the standard Hands-on Labs password.
+=== Disaster Recovery ===
 
-### === Module 1 ===
+=== Salt ===
 
-Credentials for all vCenter Operations Manager Instances:
-User name: admin
+https://salt-a.site-a.vcf.lab
 
-For vCenter Server Administration Console:
-User name: root
+root 
 
-For the vSphere Client, use:
-User name: administrator@vsphere.local
-
-### === Module 2 ===
-
-big long command line that nobody wants to type
 
 ## Lab Authors
 
 ### Principal
 
-* Principal Name:
+* Jim LaFollette, Principal Solutions Architect, VMware by Broadcom
 
 ### Captain(s)
 
-* Captain:
-* Captain:
+2734-01
+* Captain: Cristian Lamson, Principal Solutions Architect, VMware by Broadcom
+  
+2734-03
+* Captain: Captain: Jake Roczniak, Senior Solutions Architect, VMware by Broadcom
+
+2734-05
+* Captains: Denys Aleksandrov & Doug Baer, Field Application Engineer, VCF Advanced Services, Broadcom
