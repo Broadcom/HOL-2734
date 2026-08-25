@@ -14,10 +14,7 @@ $globalPass     = "VMware123!VMware123!"
 $policyName     = "vSAN ESA Auto RAID Policy"
 $vmNamePattern  = "*"
 
-# Cluster that requires DRS automation level to be explicitly set
-$drsTargetCluster = "cluster-mgmt-01b"
-
-# Specific ESXi hosts requiring the DPD service to be enabled/started
+# Standalone ESXi hosts requiring the DPD service (/etc/init.d/dpd)
 $dpdTargetHosts = @(
     "esx-10a.site-a.vcf.lab",
     "esx-11a.site-a.vcf.lab"
@@ -48,7 +45,7 @@ $sites = @(
 Set-PowerCLIConfiguration -DefaultVIServerMode Multiple -InvalidCertificateAction Ignore -Confirm:$false | Out-Null
 
 # ======================================================================
-# vSAN ESA CLUSTER & VM STORAGE POLICY RECONFIGURATION
+# EXECUTION PIPELINE
 # ======================================================================
 
 foreach ($site in $sites) {
@@ -60,10 +57,44 @@ foreach ($site in $sites) {
         $viServer = Connect-VIServer -Server $site.vCenter -User $globalUser -Password $globalPass -ErrorAction Stop
         $sessionId = $viServer.SessionId
     } catch {
-        Write-Error "Failed to connect to $($site.vCenter). Skipping its clusters..."
+        Write-Error "Failed to connect to $($site.vCenter). Skipping..."
         continue
     }
 
+    # ------------------------------------------------------------------
+    # STEP 1: STANDALONE ESXI HOST DPD SERVICE CONFIGURATION
+    # ------------------------------------------------------------------
+    foreach ($hostName in $dpdTargetHosts) {
+        # Query host directly across entire vCenter instance (ignores cluster boundaries)
+        $esxHost = Get-VMHost -Name $hostName -Server $viServer -ErrorAction SilentlyContinue
+        
+        if ($esxHost) {
+            Write-Host "Enabling & Starting DPD Service (/etc/init.d/dpd) on Standalone Host: $hostName..." -ForegroundColor Cyan
+            
+            # Method A: Direct HostService API Update
+            $dpdService = $esxHost | Get-VMHostService | Where-Object { $_.Key -match "dpd" -or $_.Label -match "dpd" }
+
+            if ($dpdService) {
+                Set-VMHostService -HostService $dpdService -Policy "On" -Confirm:$false | Out-Null
+                Start-VMHostService -HostService $dpdService -Confirm:$false | Out-Null
+                Write-Host "  -> DPD Service set to Automatic and started via HostService API." -ForegroundColor Green
+            } else {
+                # Method B: Direct ESXCLI Fallback Invocation
+                try {
+                    $esxcli = Get-EsxCli -VMHost $esxHost -V2
+                    $esxcli.system.service.set.Invoke(@{servicename = "dpd"; enabled = $true}) | Out-Null
+                    $esxcli.system.service.start.Invoke(@{servicename = "dpd"}) | Out-Null
+                    Write-Host "  -> DPD Service set to Automatic and started via ESXCLI." -ForegroundColor Green
+                } catch {
+                    Write-Error "  -> Failed to manage DPD service on host '$hostName': $_"
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # STEP 2: CLUSTER CONFIGURATION LOOP
+    # ------------------------------------------------------------------
     foreach ($env in $site.Clusters) {
         Write-Host "`n--- PROCESSING CLUSTER: $($env.Name) ---" -ForegroundColor Yellow
 
@@ -74,57 +105,19 @@ foreach ($site in $sites) {
             continue
         }
 
-        $clusterMoRef = $cluster.ExtensionData.MoRef.Value
-
-        # ------------------------------------------------------------------
-        # STEP 1: Ensure DRS Automation Level is set to FullyAutomated
-        # ------------------------------------------------------------------
-        if ($env.Name -eq $drsTargetCluster) {
-            Write-Host "Checking DRS automation level for '$($env.Name)'..." -ForegroundColor Cyan
-            
+        # DRS Update: Targeted exclusively to cluster-mgmt-01b
+        if ($env.Name -eq "cluster-mgmt-01b") {
+            Write-Host "Checking DRS automation level for 'cluster-mgmt-01b'..." -ForegroundColor Cyan
             if ($cluster.DrsAutomationLevel -ne "FullyAutomated") {
-                Write-Host "  -> Current DRS level is '$($cluster.DrsAutomationLevel)'. Updating to 'FullyAutomated'..." -ForegroundColor Cyan
                 Set-Cluster -Cluster $cluster -DrsAutomationLevel FullyAutomated -Confirm:$false | Out-Null
-                Write-Host "  -> Successfully updated DRS to FullyAutomated on $($env.Name)!" -ForegroundColor Green
+                Write-Host "  -> Successfully updated DRS to FullyAutomated on cluster-mgmt-01b!" -ForegroundColor Green
             } else {
-                Write-Host "  -> DRS is already set to FullyAutomated on $($env.Name)." -ForegroundColor Green
+                Write-Host "  -> DRS is already set to FullyAutomated on cluster-mgmt-01b." -ForegroundColor Green
             }
         }
 
-        # ------------------------------------------------------------------
-        # STEP 2: Enable & Start DPD Service (/etc/init.d/dpd)
-        # ------------------------------------------------------------------
-        foreach ($hostName in $dpdTargetHosts) {
-            $esxHost = Get-VMHost -Name $hostName -Location $cluster -Server $viServer -ErrorAction SilentlyContinue
-            if ($esxHost) {
-                Write-Host "Configuring DPD Service (/etc/init.d/dpd) on Host: $hostName..." -ForegroundColor Cyan
-                
-                $dpdService = $esxHost | Get-VMHostService | Where-Object { $_.Key -eq "dpd" -or $_.Label -match "dpd" }
-
-                if ($dpdService) {
-                    Set-VMHostService -HostService $dpdService -Policy "On" -Confirm:$false | Out-Null
-                    if (-not $dpdService.Running) {
-                        Start-VMHostService -HostService $dpdService -Confirm:$false | Out-Null
-                        Write-Host "  -> DPD Service started and set to Automatic on $hostName." -ForegroundColor Green
-                    } else {
-                        Write-Host "  -> DPD Service is already running on $hostName." -ForegroundColor Green
-                    }
-                } else {
-                    try {
-                        $esxcli = Get-EsxCli -VMHost $esxHost -V2
-                        $esxcli.system.service.start.Invoke(@{servicename = "dpd"}) | Out-Null
-                        $esxcli.system.service.set.Invoke(@{servicename = "dpd"; enabled = $true}) | Out-Null
-                        Write-Host "  -> DPD Service started via ESXCLI on $hostName." -ForegroundColor Green
-                    } catch {
-                        Write-Error "  -> Failed to start DPD service on host '$hostName': $_"
-                    }
-                }
-            }
-        }
-
-        # ------------------------------------------------------------------
-        # STEP 3: Disable Auto Policy Management (Internal SOAP Payload)
-        # ------------------------------------------------------------------
+        # Auto Policy Management: Internal SOAP Payload
+        $clusterMoRef = $cluster.ExtensionData.MoRef.Value
         Write-Host "Reconfiguring '$($env.Name)': Auto Policy Management = OFF | Auto RAID = ON..." -ForegroundColor Cyan
 
         $soapBody = @"
@@ -161,51 +154,36 @@ foreach ($site in $sites) {
 
         try {
             $response = Invoke-WebRequest -Uri $uri -Method Post -ContentType "text/xml; charset=utf-8" -Headers $headers -Body $soapBody -SkipCertificateCheck
-            
             if ($response.StatusCode -eq 200) {
                 Write-Host "  -> Successfully disabled Auto Policy Management!" -ForegroundColor Green
-            } else {
-                Write-Host "  -> Received unusual status: $($response.StatusCode)" -ForegroundColor Yellow
             }
         } catch {
             Write-Error "  -> Failed to execute API call: $_"
         }
 
-        # ------------------------------------------------------------------
-        # STEP 4: Change Default Storage Policy for the vSAN Datastore
-        # ------------------------------------------------------------------
+        # Change Default Storage Policy for Datastore
         Write-Host "Setting default policy for datastore '$($env.Datastore)' to '$policyName'..." -ForegroundColor Cyan
-        
         $ds = Get-Datastore -Name $env.Datastore -Server $viServer -ErrorAction SilentlyContinue
         $targetPolicy = Get-SpbmStoragePolicy -Name $policyName -Server $viServer -ErrorAction SilentlyContinue
 
         if ($ds -and $targetPolicy) {
             $ds | Get-SpbmEntityConfiguration | Set-SpbmEntityConfiguration -StoragePolicy $targetPolicy -Confirm:$false | Out-Null
             Write-Host "  -> Datastore policy updated successfully." -ForegroundColor Green
-        } else {
-            Write-Error "  -> Could not locate Datastore '$($env.Datastore)' or Policy '$policyName'."
         }
 
-        # ------------------------------------------------------------------
-        # STEP 5: Change Storage Policy for Target Group of VMs
-        # Excludes VMs starting with: acct-, sales-, dev-, or "vSAN File"
-        # ------------------------------------------------------------------
+        # Change Storage Policy for Target Group of VMs (Excludes acct-, sales-, dev-, vSAN File)
         $vms = Get-VM -Location $cluster -Name $vmNamePattern -Server $viServer -ErrorAction SilentlyContinue | 
                Where-Object { $_.Name -notmatch $vmExcludeRegex }
 
         if ($vms) {
             Write-Host "Updating storage policies for $(($vms).Count) VMs in $($env.Name)..." -ForegroundColor Cyan
-
             foreach ($vm in $vms) {
                 $vm | Get-SpbmEntityConfiguration | Set-SpbmEntityConfiguration -StoragePolicy $targetPolicy -Confirm:$false | Out-Null
                 $vm | Get-HardDisk | Get-SpbmEntityConfiguration | Set-SpbmEntityConfiguration -StoragePolicy $targetPolicy -Confirm:$false | Out-Null
                 Write-Host "  -> Reassigned policy for VM: $($vm.Name)" -ForegroundColor Green
             }
-        } else {
-            Write-Host "  -> No eligible VMs found in cluster '$($env.Name)'." -ForegroundColor Yellow
         }
     }
 }
 
-# Clean disconnect from all connected vCenters
 Disconnect-VIServer -Server * -Confirm:$false -ErrorAction SilentlyContinue
