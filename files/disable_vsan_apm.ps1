@@ -1,5 +1,5 @@
 # ======================================================================
-# vSAN 9.1 ESA Multi-Site Cluster Reconfiguration
+# vSAN 9.1 ESA Multi-Site Cluster & Host Service Reconfiguration
 # (Automated CI/CD Deployment Version)
 # ======================================================================
 
@@ -14,8 +14,13 @@ $globalPass     = "VMware123!VMware123!"
 $policyName     = "vSAN ESA Auto RAID Policy"
 $vmNamePattern  = "*"
 
+# Specific ESXi hosts requiring the DPD service to be enabled/started
+$dpdTargetHosts = @(
+    "esx-10a.site-a.vcf.lab",
+    "esx-11a.site-a.vcf.lab"
+)
+
 # Regex pattern to exclude VMs starting with acct-, sales-, dev-, or "vSAN File"
-# (Matches case-insensitively: "vSAN File", "vsan-file", etc.)
 $vmExcludeRegex = '^(acct-|sales-|dev-|vSAN[\s_-]?File)'
 
 # Topology Definition
@@ -69,7 +74,40 @@ foreach ($site in $sites) {
         $clusterMoRef = $cluster.ExtensionData.MoRef.Value
 
         # ------------------------------------------------------------------
-        # STEP 1: Disable Auto Policy Management (Internal SOAP Payload)
+        # STEP 1: Enable & Start DPD Service (/etc/init.d/dpd)
+        # ------------------------------------------------------------------
+        foreach ($hostName in $dpdTargetHosts) {
+            $esxHost = Get-VMHost -Name $hostName -Location $cluster -Server $viServer -ErrorAction SilentlyContinue
+            if ($esxHost) {
+                Write-Host "Configuring DPD Service (/etc/init.d/dpd) on Host: $hostName..." -ForegroundColor Cyan
+                
+                # Check standard VMHostService object for 'dpd'
+                $dpdService = $esxHost | Get-VMHostService | Where-Object { $_.Key -eq "dpd" -or $_.Label -match "dpd" }
+
+                if ($dpdService) {
+                    Set-VMHostService -HostService $dpdService -Policy "On" -Confirm:$false | Out-Null
+                    if (-not $dpdService.Running) {
+                        Start-VMHostService -HostService $dpdService -Confirm:$false | Out-Null
+                        Write-Host "  -> DPD Service started and set to Automatic on $hostName." -ForegroundColor Green
+                    } else {
+                        Write-Host "  -> DPD Service is already running on $hostName." -ForegroundColor Green
+                    }
+                } else {
+                    # Fallback via esxcli system process/service call if unlisted in ServiceManager UI
+                    try {
+                        $esxcli = Get-EsxCli -VMHost $esxHost -V2
+                        $esxcli.system.service.start.Invoke(@{servicename = "dpd"}) | Out-Null
+                        $esxcli.system.service.set.Invoke(@{servicename = "dpd"; enabled = $true}) | Out-Null
+                        Write-Host "  -> DPD Service started via ESXCLI on $hostName." -ForegroundColor Green
+                    } catch {
+                        Write-Error "  -> Failed to start DPD service on host '$hostName': $_"
+                    }
+                }
+            }
+        }
+
+        # ------------------------------------------------------------------
+        # STEP 2: Disable Auto Policy Management (Internal SOAP Payload)
         # ------------------------------------------------------------------
         Write-Host "Reconfiguring '$($env.Name)': Auto Policy Management = OFF | Auto RAID = ON..." -ForegroundColor Cyan
 
@@ -118,7 +156,7 @@ foreach ($site in $sites) {
         }
 
         # ------------------------------------------------------------------
-        # STEP 2: Change Default Storage Policy for the vSAN Datastore
+        # STEP 3: Change Default Storage Policy for the vSAN Datastore
         # ------------------------------------------------------------------
         Write-Host "Setting default policy for datastore '$($env.Datastore)' to '$policyName'..." -ForegroundColor Cyan
         
@@ -133,14 +171,14 @@ foreach ($site in $sites) {
         }
 
         # ------------------------------------------------------------------
-        # STEP 3: Change Storage Policy for Target Group of VMs
+        # STEP 4: Change Storage Policy for Target Group of VMs
         # Excludes VMs starting with: acct-, sales-, dev-, or "vSAN File"
         # ------------------------------------------------------------------
         $vms = Get-VM -Location $cluster -Name $vmNamePattern -Server $viServer -ErrorAction SilentlyContinue | 
                Where-Object { $_.Name -notmatch $vmExcludeRegex }
 
         if ($vms) {
-            Write-Host "Updating storage policies for $(($vms).Count) VMs in $($env.Name) (Excluding acct-, sales-, dev-, vSAN File...)..." -ForegroundColor Cyan
+            Write-Host "Updating storage policies for $(($vms).Count) VMs in $($env.Name)..." -ForegroundColor Cyan
 
             foreach ($vm in $vms) {
                 $vm | Get-SpbmEntityConfiguration | Set-SpbmEntityConfiguration -StoragePolicy $targetPolicy -Confirm:$false | Out-Null
