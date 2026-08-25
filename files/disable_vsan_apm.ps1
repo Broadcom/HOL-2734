@@ -14,6 +14,9 @@ $globalPass     = "VMware123!VMware123!"
 $policyName     = "vSAN ESA Auto RAID Policy"
 $vmNamePattern  = "*"
 
+# Cluster that requires DRS automation level to be explicitly set
+$drsTargetCluster = "cluster-mgmt-01b"
+
 # Specific ESXi hosts requiring the DPD service to be enabled/started
 $dpdTargetHosts = @(
     "esx-10a.site-a.vcf.lab",
@@ -74,14 +77,28 @@ foreach ($site in $sites) {
         $clusterMoRef = $cluster.ExtensionData.MoRef.Value
 
         # ------------------------------------------------------------------
-        # STEP 1: Enable & Start DPD Service (/etc/init.d/dpd)
+        # STEP 1: Ensure DRS Automation Level is set to FullyAutomated
+        # ------------------------------------------------------------------
+        if ($env.Name -eq $drsTargetCluster) {
+            Write-Host "Checking DRS automation level for '$($env.Name)'..." -ForegroundColor Cyan
+            
+            if ($cluster.DrsAutomationLevel -ne "FullyAutomated") {
+                Write-Host "  -> Current DRS level is '$($cluster.DrsAutomationLevel)'. Updating to 'FullyAutomated'..." -ForegroundColor Cyan
+                Set-Cluster -Cluster $cluster -DrsAutomationLevel FullyAutomated -Confirm:$false | Out-Null
+                Write-Host "  -> Successfully updated DRS to FullyAutomated on $($env.Name)!" -ForegroundColor Green
+            } else {
+                Write-Host "  -> DRS is already set to FullyAutomated on $($env.Name)." -ForegroundColor Green
+            }
+        }
+
+        # ------------------------------------------------------------------
+        # STEP 2: Enable & Start DPD Service (/etc/init.d/dpd)
         # ------------------------------------------------------------------
         foreach ($hostName in $dpdTargetHosts) {
             $esxHost = Get-VMHost -Name $hostName -Location $cluster -Server $viServer -ErrorAction SilentlyContinue
             if ($esxHost) {
                 Write-Host "Configuring DPD Service (/etc/init.d/dpd) on Host: $hostName..." -ForegroundColor Cyan
                 
-                # Check standard VMHostService object for 'dpd'
                 $dpdService = $esxHost | Get-VMHostService | Where-Object { $_.Key -eq "dpd" -or $_.Label -match "dpd" }
 
                 if ($dpdService) {
@@ -93,7 +110,6 @@ foreach ($site in $sites) {
                         Write-Host "  -> DPD Service is already running on $hostName." -ForegroundColor Green
                     }
                 } else {
-                    # Fallback via esxcli system process/service call if unlisted in ServiceManager UI
                     try {
                         $esxcli = Get-EsxCli -VMHost $esxHost -V2
                         $esxcli.system.service.start.Invoke(@{servicename = "dpd"}) | Out-Null
@@ -107,7 +123,7 @@ foreach ($site in $sites) {
         }
 
         # ------------------------------------------------------------------
-        # STEP 2: Disable Auto Policy Management (Internal SOAP Payload)
+        # STEP 3: Disable Auto Policy Management (Internal SOAP Payload)
         # ------------------------------------------------------------------
         Write-Host "Reconfiguring '$($env.Name)': Auto Policy Management = OFF | Auto RAID = ON..." -ForegroundColor Cyan
 
@@ -156,7 +172,7 @@ foreach ($site in $sites) {
         }
 
         # ------------------------------------------------------------------
-        # STEP 3: Change Default Storage Policy for the vSAN Datastore
+        # STEP 4: Change Default Storage Policy for the vSAN Datastore
         # ------------------------------------------------------------------
         Write-Host "Setting default policy for datastore '$($env.Datastore)' to '$policyName'..." -ForegroundColor Cyan
         
@@ -171,7 +187,7 @@ foreach ($site in $sites) {
         }
 
         # ------------------------------------------------------------------
-        # STEP 4: Change Storage Policy for Target Group of VMs
+        # STEP 5: Change Storage Policy for Target Group of VMs
         # Excludes VMs starting with: acct-, sales-, dev-, or "vSAN File"
         # ------------------------------------------------------------------
         $vms = Get-VM -Location $cluster -Name $vmNamePattern -Server $viServer -ErrorAction SilentlyContinue | 
