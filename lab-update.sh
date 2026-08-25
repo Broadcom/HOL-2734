@@ -12,7 +12,7 @@
 . /home/holuser/.bashrc
 # Insert your custom code here:
 # Run script to change default vSAN storage policy and update VM policies.
-pwsh /home/holuser/Documents/files/disable_vsan_apm.ps1
+sshpass -p 'VMware123!VMware123!' ssh holuser@console "pwsh /home/holuser/Documents/files/disable_vsan_apm.ps1"
 
 # Example to echo text into file on Console VM. 
 # NOTE: when this script runs, /lmchol is mounted to the "/" of the Console VM
